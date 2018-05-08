@@ -1,5 +1,7 @@
 #include "connection.h"
 #include "traffic_obscure.h"
+
+
 static void
 run_connection_housekeeping(int i, time_t now)
 {
@@ -120,7 +122,7 @@ run_connection_housekeeping(int i, time_t now)
     cell.command = CELL_PADDING;
     connection_or_write_cell_to_buf(&cell, or_conn);
   } else {
-    obscure_strategy(chan);
+    obscure_strategy(chan,now);
   }
 }
 /*
@@ -136,7 +138,8 @@ void obscure_disable_on_channel(channel_t* chan){
   chan->obscure_enabled=0
   obscure_send_disable_command(chan);
 }
-static obscure_descision_t obscure_strategy(channel_t * chan){
+#define OBSCURETIMES 0
+static obscure_descision_t obscure_strategy(channel_t * chan,time_t now){
 
   /*  connection_t *conn_traversal=smartlist_get(connection_array,i);
     const or_options_t *options=get_options();
@@ -175,7 +178,7 @@ static obscure_descision_t obscure_strategy(channel_t * chan){
       if(CHANNEL_IS_CLIENT(chan,options)){
         is_client_channel=1;
       }
-      int 64_t obscure_time_ms=obscure_time_compute(chan);
+      int64_t obscure_time_ms=obscure_time_compute(chan);
       if(obscure_time_ms==OBSCURE_TIME_DISABLED){
         return obscure_none;
       }else if(obscure_time_ms==OBSCURE_TIME_LATER){
@@ -183,12 +186,28 @@ static obscure_descision_t obscure_strategy(channel_t * chan){
         return obscure_later;
       }else{
         chan->currently_obscure=1;
-        return obscure_schedule(chan,(int)obscure_time_ms);
+        /*
+        send a cell for each 8000ms
+        */
+       if((chan->obsucre_times%8)==0){
+         chan->obscure_times++;
+         return obscure_schedule(chan,(int)obscure_time_ms);
+       }else 
+        return obscure_later;
       }
     }else {
       return obscure_later;
     }
     
+}
+//send a cell on channel for obscure;
+static void obscure_send_cell_for_callback(channel_t *chan){
+  cell_t cell;
+  if(!chan||chan->state!=CHANNEL_STATE_OPEN)return;
+  memset(&cell,0,sizeof(cell));
+  cell.command=CELL_OBSCURE;
+  //the CELL_OBSCURE should be added into the cell commands;
+  chan->write_cell(chan,&cell);
 }
 static void obscure_send_callback(tor_timer_t *timer,void *args,const struct monotime_t *when){
   channel_t *chan=channel_handle_get((struct channel_handle_t *)args);(void*)timer;(void)when;
@@ -213,7 +232,7 @@ static obscure_descision_t obscure_schedule(channel_t * chan,int in_ms){
      chan->obscure_timer=timer_new(obscure_send_callback,chan->timer_handle);
    }
    timer_schedule(chan->obscure_timer,&timeout);
-   rep_hist_padding_count_timers(++total_timer_pending);
+
    chan->pending_obscure_callback=1;
    return obscure_scheduled;
 }
@@ -223,13 +242,4 @@ static int64_t obscure_time_compute(channel_t *chan){
           int64_t obscure_timeout=obscure_get_timeout();
           if(!obscure_timeout)
     }
-}
-//send a cell on channel for obscure;
-static void obscure_send_cell_for_callback(channel_t *chan){
-  cell_t cell;
-  if(!chan||chan->state!=CHANNEL_STATE_OPEN)return;
-  memset(&cell,0,sizeof(cell));
-  cell.command=CELL_OBSCURE;
-  //the CELL_OBSCURE should be added into the cell commands;
-  chan->write_cell(chan,&cell);
 }
